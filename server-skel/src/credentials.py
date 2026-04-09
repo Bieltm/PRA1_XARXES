@@ -1,0 +1,1 @@
+#Simplificació podeu acceptar qualsevol contrasenya de 8 bytes.

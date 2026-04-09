@@ -1,0 +1,1 @@
+#Implementeu la taula MAC (RFC-31337 §8.1)

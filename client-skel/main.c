@@ -8,6 +8,8 @@
 #include <sys/time.h>
 
 #include "tap.h"
+#include "protocol.h"
+#include "udp.h"
 
 
 #define KEEPALIVE_INTERVAL_SEC 10
@@ -181,6 +183,7 @@ int main(int argc, char *argv[])
 
     int ret = parse_args(argc, argv, &cfg);
     if (ret <= 0) {
+        printf("Error en ret, valor: %d", ret);
         /* ret == 0 -> parsing error exit -1, ret < 0 -> help requested exit 0*/
         return (ret < 0) ? 0 : -1;
     }
@@ -191,16 +194,75 @@ int main(int argc, char *argv[])
         fprintf(stderr, "Error: could not open TAP device %s\n", cfg.tap_if);
         return 1;
     }
+
+    client_run(&cfg, tap_fd);
+
     close(tap_fd);
-
-    // TODO: Start client run loop, which should handle everything after this point, including:
-    // - Sending keepalive packets to the server every KEEPALIVE_INTERVAL_SEC seconds
-    // - Reading frames from the TAP device and sending them to the server
-    // - Receiving packets from the server and writing them to the TAP device
-    // You should implement this in a separate function (e.g. client_run) 
-    // and keep code clean and tidy. 
-    // client_run(&cfg, tap_fd);
-
     return 0;
 }
 
+
+void client_run(vpn_config_t *cfg, int tap_fd) {
+    int udp_fd = udp_open(); // Afegit el tipus 'int'
+    struct sockaddr_in server_addr;
+    memset(&server_addr, 0, sizeof(server_addr));
+    server_addr.sin_family = AF_INET;
+    server_addr.sin_port = htons(cfg->port);
+    inet_pton(AF_INET, cfg->server_ip, &server_addr.sin_addr);
+
+    uint8_t paquet_reg[11];
+    encode(paquet_reg, 0x01, cfg->client_id, NULL, NULL, 0);
+    udp_send(udp_fd, (char *)paquet_reg, 11, (struct sockaddr *)&server_addr);
+
+    time_t ultim_keepalive = time(NULL);
+    fd_set descriptors;
+
+    uint8_t buffer_in[MAX_FRAME_SIZE + 11];
+    uint8_t eth_frame[MAX_FRAME_SIZE];
+    uint8_t paquet_out[MAX_FRAME_SIZE + 11];
+
+    while (1) {
+        FD_ZERO(&descriptors);
+        FD_SET(udp_fd, &descriptors);
+        FD_SET(tap_fd, &descriptors);
+
+        int max_fd = (udp_fd > tap_fd) ? udp_fd : tap_fd;
+        struct timeval tv = {1, 0}; // 1 segon de timeout
+
+        int seleccionats = select(max_fd + 1, &descriptors, NULL, NULL, &tv);
+
+        if (seleccionats > 0) {
+            if (FD_ISSET(udp_fd, &descriptors)) {
+                struct sockaddr_in de_on;
+                int n_bytes = udp_recv(udp_fd, (char *)buffer_in, sizeof(buffer_in), (struct sockaddr *)&de_on);
+                if (n_bytes > 0) {
+                    uint8_t opcode, payload[8];
+                    uint16_t client_id_rec;
+                    int eth_len = descode(buffer_in, n_bytes, &opcode, &client_id_rec, payload, eth_frame);
+
+                    if (opcode == 0x02) { 
+                        encode(paquet_out, 0x02, cfg->client_id, (uint8_t *)cfg->password, NULL, 0);
+                        udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+                    } else if (opcode == 0x03 && eth_len > 0) {
+                        write(tap_fd, eth_frame, eth_len);
+                    }
+                }
+            }
+
+            if (FD_ISSET(tap_fd, &descriptors)) {
+                int n_llegits = read(tap_fd, eth_frame, sizeof(eth_frame));
+                if (n_llegits > 0) {
+                    int total_len = encode(paquet_out, 0x03, cfg->client_id, NULL, eth_frame, n_llegits);
+                    udp_send(udp_fd, (char *)paquet_out, total_len, (struct sockaddr *)&server_addr);
+                }
+            }
+        }
+
+        time_t ara = time(NULL);
+        if (ara - ultim_keepalive >= KEEPALIVE_INTERVAL_SEC) {
+            encode(paquet_out, 0x05, cfg->client_id, NULL, NULL, 0);
+            udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+            ultim_keepalive = ara;
+        }
+    }
+}

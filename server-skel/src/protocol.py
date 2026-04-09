@@ -1,0 +1,1 @@
+#Definiu l’enum Opcode (valors a RFC-31337 §5) i la classe VpnHeader (format a RFC-31337 §4.1).

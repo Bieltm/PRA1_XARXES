@@ -15,3 +15,4 @@ typedef struct {
 int encode(uint8_t *output, uint8_t opcode, uint16_t client_id, uint8_t payload[8], uint8_t *eth_frame, int eth_len);
 
 int descode(uint8_t *input, int input_len, uint8_t *opcode, uint16_t *client_id, uint8_t *payload, uint8_t *eth_frame);
+#endif

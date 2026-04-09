@@ -1,0 +1,1 @@
+#Gestió de sessions (RFC-31337 §7.1)
