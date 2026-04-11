@@ -35,6 +35,12 @@ class VpnHeader:
         return struct.unpack("!Q", payload)[0]
     #TODO:
     #Extraccio de les adreçes MAC
+    def Get_MadAddr(trama_ethernet):
+        if len(trama_ethernet) < 14:
+            return None, None
+        dest_mac = trama_ethernet[0:6] 
+        src_mac = trama_ethernet[6:12] 
+        return dest_mac, src_mac
     #Format de MAC per a humans
     #Gestió de la contrasenya
     #Definició de la politica de MACs desconegudes
