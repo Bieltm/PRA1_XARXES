@@ -7,12 +7,19 @@ class SessionState(Enum):
     REGISTERING = "registering"
     AUTHENTICATED = "authenticated"
 class Session:
-    cids_registrats = set()
     def __init__(self, cid: int, addr: tuple):
         self.cid = cid
         self.addr = addr
         self.state = SessionState.NONE
         self.last_seen = None
+class Server:
+    def __init__(self):
+        self.session = {}
+        self.mac_table = {}
+    def add_session(self, sessio: Session):
+        self.sessions[sessio.cid] = sessio
+    def get_session_by_cid(self, cid: int):
+        return self.sessions.get(cid)
     
     #Rebre el REGISTER, comprovar si ja existia sessió per aquell CID (i si cal netejar les MAC), establir last_seen i respondre ACK.
     def on_register(self, cid_rebut, addr_rebut):
@@ -20,15 +27,12 @@ class Session:
             session = self.get_session_by_cid(cid_rebut)
             if session.addr != addr_rebut:
                 session.addr = addr_rebut
-                self.mac_table.remove_entries_for_cid(cid_rebut)
+                #TODO: ELIMINAR LES ADRECES MAC EN AQUESTA CID.
         else:
-            session = Session(cid_rebut, addr_rebut)
-            Session.cids_registrats.add(cid_rebut)
+            session = self.add_session(Session(cid_rebut, addr_rebut))
         session.state = SessionState.REGISTERING
         session.last_seen = time.time()
         self.send_ack(session.addr, session.cid)
-
-
 
     #def on_authenticate(...): en aquest estat el servidor ja permet el reenviament de missatges de trafic
     #Manteniment d'activitat: El client ha d'enviar un missatge KEEPALIVE (Opcode 0x04) si no ha enviat tràfic de dades en els darrers 10 segons.
