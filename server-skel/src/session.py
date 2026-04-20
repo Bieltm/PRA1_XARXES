@@ -51,7 +51,7 @@ class Server:
         session.last_seen = time.time()
         self.send_ack(session, session.cid, self.server_socket)
     #Un cop el client rep l'ACK del registre, ha de preparar immediatament el paquet d'autenticació:
-    def verificate(self, cid_rebut, payload : bytes[8]):
+    def verificate(self, cid_rebut, payload : bytes):
         session = self.get_session_by_cid(cid_rebut)
         #Existència: Verifica que el CID especificat tingui una sessió oberta a la taula.
         if not session:
@@ -85,5 +85,4 @@ class Server:
             if (time.time() - session.last_seen) > temps_configurat:
                 self.delete_MAC_entrys(cid)
                 del self.session[cid]    
-                
-            
+
