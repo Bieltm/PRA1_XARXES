@@ -80,7 +80,7 @@ class VpnServer:
                             print(f"Client {cid} authenticated.")
                     else:
                         print(f"Credencials invàlides pel CID {cid}")
-                        self.enviar_reject(addr, cid)
+                        self.send_reject(addr, cid)
 
             elif opcode == protocol.Opcode.KEEPALIVE:
                 self.gestor_sessions.refresh_ls(dades)
@@ -106,7 +106,7 @@ class VpnServer:
                                 self.stats.inc_broadcast()
                             else:
                                 self.stats.inc_unknown_unicast()
-                            self.enviar_a_tots(dades, excepte_cid=cid)
+                            self.send_to_all(dades, excepte_cid=cid)
                             
                         elif accio == "DISCARD":
                             self.stats.inc_unknown_unicast()
@@ -118,13 +118,13 @@ class VpnServer:
                                 self.stats.inc_tx()
                                 self.sock.sendto(dades, dest_session.addr)
     
-    def enviar_a_tots(self, dades, excepte_cid):
+    def send_to_all(self, dades, excepte_cid):
         for cid, sessio in self.gestor_sessions.session.items():
             if cid != excepte_cid and sessio.state == session.SessionState.AUTHENTICATED:
                 self.stats.inc_tx()
                 self.sock.sendto(dades, sessio.addr)
 
-    def enviar_reject(self, addr, cid):
+    def send_reject(self, addr, cid):
         opcode = bytes([0x06])
         cid_bytes = cid.to_bytes(2, byteorder='big')
         payload = bytes(8)
