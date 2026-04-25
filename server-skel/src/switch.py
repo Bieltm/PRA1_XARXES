@@ -25,7 +25,7 @@ class Switch:
             return "BROADCAST"
         # 2. Unicast Conegut
         if mac_desti in self.taula_mac:
-            return self.taula_mac[mac_desti]  # Retorna el CID directe
+            return self.taula_mac[mac_desti] 
         # 3. Unicast Desconegut
         if self.policy == "flood":
             return "FLOOD"
