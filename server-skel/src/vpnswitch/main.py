@@ -75,12 +75,9 @@ def main(
     )
 
     ic(config)
-    # TODO: Implementar el servidor. Creant una instància de una classe (VpnServer, per exemple) 
-    # que encapsuli tota la lògica del servidor i cridar al seu mètode run() (exemple). 
-    # Això ajudarà a mantenir el codi net i organitzat.
-    #       
-    # server = VpnServer(config)
-    # server.run()
+    from server import VpnServer
+    server = VpnServer(config)
+    server.run()
     pass
 
 

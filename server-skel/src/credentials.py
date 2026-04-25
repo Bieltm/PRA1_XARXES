@@ -1,5 +1,4 @@
 #Simplificació podeu acceptar qualsevol contrasenya de 8 bytes.
-# credentials.py
 
 def validar_contrasenya(password: bytes) -> bool:
     # 1. Ha de tenir exactament 8 bytes
