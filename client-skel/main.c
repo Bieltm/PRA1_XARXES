@@ -6,263 +6,172 @@
 #include <signal.h>
 #include <sys/select.h>
 #include <sys/time.h>
+#include <time.h>
+#include <arpa/inet.h>
 
 #include "tap.h"
 #include "protocol.h"
 #include "udp.h"
 
-
 #define KEEPALIVE_INTERVAL_SEC 10
 #define MAX_FRAME_SIZE         65535
 
-
-/* Configuration parsed from command-line arguments */
 typedef struct {
     const char *tap_if;
     const char *server_ip;
     int         port;
     int         client_id;
-    char        password[9]; /* 8 chars + NUL */
+    char        password[9]; 
 } vpn_config_t;
 
-static void print_usage(const char *prog)
-{
-    fprintf(stderr,
-        "Usage: %s --tap <interface> --server <ip> --port <port>\n"
-        "           --id <number> --password <string>\n"
-        "\n"
-        "Options:\n"
-        "  --tap      <interface>  TAP interface name (e.g. tap0)\n"
-        "  --server   <ip>         Server IPv4 address\n"
-        "  --port     <port>       UDP port (1-65535)\n"
-        "  --id       <number>     Client ID (0-65535)\n"
-        "  --password <string>     8-character alphanumeric password [A-Za-z0-9]\n"
-        "  --help                  Print this usage and exit\n",
-        prog);
+void client_run(vpn_config_t *cfg, int tap_fd);
+
+static void print_usage(const char *prog) {
+    fprintf(stderr, "Uso: %s --tap <if> --server <ip> --port <port> --id <id> --password <pw>\n", prog);
 }
 
-/**
- * Validate a password string.
- *
- * Returns 0 if the password is valid, or -1 if it is not.
- *
- * A password is considered valid if it is exactly 8 characters
- * long and only contains alphanumeric characters (A-Za-z0-9).
- */
-static int validate_password(const char *pw)
-{
-    int i;
-    if (strlen(pw) != 8) {
-        return -1;
-    }
-    for (i = 0; i < 8; i++) {
-        if (!isalnum((unsigned char)pw[i])) {
-            return -1;
-        }
+static int validate_password(const char *pw) {
+    if (strlen(pw) != 8) return -1;
+    for (int i = 0; i < 8; i++) {
+        if (!isalnum((unsigned char)pw[i])) return -1;
     }
     return 0;
 }
 
-
-/**
- * Parse command-line arguments into a vpn_config_t structure.
- *
- * Returns 1 on success, 0 on parsing error (an error message and/or
- * usage is printed to stderr), and -1 if "--help" was requested.  The
- * cfg structure is zeroed before parsing so callers do not need to
- * initialize it.
- *
- * Return codes:
- *   1  success
- *   0  parsing error (an error message and/or usage is printed to stderr)
- *  -1  "--help" was requested (usage printed, caller should exit 0)
- */
-static int parse_args(int argc, char *argv[], vpn_config_t *cfg)
-{
-    int i;
+static int parse_args(int argc, char *argv[], vpn_config_t *cfg) {
     int has_tap = 0, has_server = 0, has_port = 0, has_id = 0, has_password = 0;
-
     memset(cfg, 0, sizeof(*cfg));
 
-    for (i = 1; i < argc; i++) {
+    for (int i = 1; i < argc; i++) {
         if (strcmp(argv[i], "--help") == 0) {
             print_usage(argv[0]);
-            return -1; /* help requested */
-
-        } else if (strcmp(argv[i], "--tap") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: --tap requires an argument\n");
-                print_usage(argv[0]);
-                return 0;
-            }
+            return -1;
+        } else if (strcmp(argv[i], "--tap") == 0 && i + 1 < argc) {
             cfg->tap_if = argv[++i];
             has_tap = 1;
-
-        } else if (strcmp(argv[i], "--server") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: --server requires an argument\n");
-                print_usage(argv[0]);
-                return 0;
-            }
+        } else if (strcmp(argv[i], "--server") == 0 && i + 1 < argc) {
             cfg->server_ip = argv[++i];
             has_server = 1;
-
-        } else if (strcmp(argv[i], "--port") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: --port requires an argument\n");
-                print_usage(argv[0]);
-                return 0;
-            }
-            {
-                char *end;
-                long val = strtol(argv[++i], &end, 10);
-                if (*end != '\0' || val < 1 || val > 65535) {
-                    fprintf(stderr, "Error: --port must be in range 1-65535\n");
-                    print_usage(argv[0]);
-                    return 0;
-                }
-                cfg->port = (int)val;
-            }
+        } else if (strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            cfg->port = atoi(argv[++i]);
             has_port = 1;
-
-        } else if (strcmp(argv[i], "--id") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: --id requires an argument\n");
-                print_usage(argv[0]);
-                return 0;
-            }
-            {
-                char *end;
-                long val = strtol(argv[++i], &end, 10);
-                if (*end != '\0' || val < 0 || val > 65535) {
-                    fprintf(stderr, "Error: --id must be in range 0-65535\n");
-                    print_usage(argv[0]);
-                    return 0;
-                }
-                cfg->client_id = (int)val;
-            }
+        } else if (strcmp(argv[i], "--id") == 0 && i + 1 < argc) {
+            cfg->client_id = atoi(argv[++i]);
             has_id = 1;
-
-        } else if (strcmp(argv[i], "--password") == 0) {
-            if (i + 1 >= argc) {
-                fprintf(stderr, "Error: --password requires an argument\n");
-                print_usage(argv[0]);
-                return 0;
-            }
-            {
-                const char *pw = argv[++i];
-                if (validate_password(pw) != 0) {
-                    fprintf(stderr,
-                        "Error: --password must be exactly 8 alphanumeric characters [A-Za-z0-9]\n");
-                    return 0;
-                }
+        } else if (strcmp(argv[i], "--password") == 0 && i + 1 < argc) {
+            const char *pw = argv[++i];
+            if (validate_password(pw) == 0) {
                 memcpy(cfg->password, pw, 8);
                 cfg->password[8] = '\0';
+                has_password = 1;
             }
-            has_password = 1;
-
-        } else {
-            fprintf(stderr, "Error: unknown argument: %s\n", argv[i]);
-            print_usage(argv[0]);
-            return 0;
         }
     }
-
-    if (!has_tap || !has_server || !has_port || !has_id || !has_password) {
-        fprintf(stderr, "Error: missing required arguments\n");
-        print_usage(argv[0]);
-        return 0;
-    }
-
-    return 0;
+    if (has_tap && has_server && has_port && has_id && has_password) return 1;
+    return 0; 
 }
-
-int main(int argc, char *argv[])
-{
-    vpn_config_t cfg;
-
-    int ret = parse_args(argc, argv, &cfg);
-    if (ret <= 0) {
-        printf("Error en ret, valor: %d", ret);
-        /* ret == 0 -> parsing error exit -1, ret < 0 -> help requested exit 0*/
-        return (ret < 0) ? 0 : -1;
-    }
-
-    /* Open TAP device, you should handle this out of main*/
-    int tap_fd = tap_open(cfg.tap_if);
-    if (tap_fd < 0) {
-        fprintf(stderr, "Error: could not open TAP device %s\n", cfg.tap_if);
-        return 1;
-    }
-
-    client_run(&cfg, tap_fd);
-
-    close(tap_fd);
-    return 0;
-}
-
 
 void client_run(vpn_config_t *cfg, int tap_fd) {
-    int udp_fd = udp_open(); // Afegit el tipus 'int'
+    int udp_fd = udp_open();
+    if (udp_fd < 0) {
+        perror("Error al abrir socket UDP");
+        return;
+    }
+
     struct sockaddr_in server_addr;
     memset(&server_addr, 0, sizeof(server_addr));
     server_addr.sin_family = AF_INET;
     server_addr.sin_port = htons(cfg->port);
     inet_pton(AF_INET, cfg->server_ip, &server_addr.sin_addr);
 
-    uint8_t paquet_reg[11];
-    encode(paquet_reg, 0x01, cfg->client_id, NULL, NULL, 0);
-    udp_send(udp_fd, (char *)paquet_reg, 11, (struct sockaddr *)&server_addr);
-
-    time_t ultim_keepalive = time(NULL);
-    fd_set descriptors;
-
-    uint8_t buffer_in[MAX_FRAME_SIZE + 11];
+    uint8_t buffer_in[MAX_FRAME_SIZE + 20];
     uint8_t eth_frame[MAX_FRAME_SIZE];
-    uint8_t paquet_out[MAX_FRAME_SIZE + 11];
+    uint8_t paquet_out[MAX_FRAME_SIZE + 20];
+
+    int authenticated = 0;
+    time_t ultim_enviament = 0; 
+
+    printf("Cliente %d iniciado. Intentando conectar...\n", cfg->client_id);
 
     while (1) {
+        fd_set descriptors;
         FD_ZERO(&descriptors);
         FD_SET(udp_fd, &descriptors);
         FD_SET(tap_fd, &descriptors);
 
         int max_fd = (udp_fd > tap_fd) ? udp_fd : tap_fd;
-        struct timeval tv = {1, 0}; // 1 segon de timeout
+        struct timeval tv = {1, 0};
 
-        int seleccionats = select(max_fd + 1, &descriptors, NULL, NULL, &tv);
-
-        if (seleccionats > 0) {
+        if (select(max_fd + 1, &descriptors, NULL, NULL, &tv) > 0) {
+            
+            // Dades des del Servidor
             if (FD_ISSET(udp_fd, &descriptors)) {
-                struct sockaddr_in de_on;
-                int n_bytes = udp_recv(udp_fd, (char *)buffer_in, sizeof(buffer_in), (struct sockaddr *)&de_on);
-                if (n_bytes > 0) {
-                    uint8_t opcode, payload[8];
-                    uint16_t client_id_rec;
-                    int eth_len = descode(buffer_in, n_bytes, &opcode, &client_id_rec, payload, eth_frame);
+                struct sockaddr_in from;
+                int n = udp_recv(udp_fd, (char *)buffer_in, sizeof(buffer_in), (struct sockaddr *)&from);
+                if (n > 0) {
+                    uint8_t op, pay[8];
+                    uint16_t id;
+                    int eth_len = descode(buffer_in, n, &op, &id, pay, eth_frame);
 
-                    if (opcode == 0x02) { 
-                        encode(paquet_out, 0x02, cfg->client_id, (uint8_t *)cfg->password, NULL, 0);
+                    if (op == 0x02) { // AUTH_REQ
+                        printf("¡Servidor responde! Enviando contraseña...\n");
+                        encode(paquet_out, 0x02, cfg->client_id, (uint8_t*)cfg->password, NULL, 0);
                         udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
-                    } else if (opcode == 0x03 && eth_len > 0) {
-                        write(tap_fd, eth_frame, eth_len);
+                        authenticated = 1; 
+                    } 
+                    // NOU: Si rebem KEEPALIVE o DATA, el servidor ja ens coneix!
+                    else if (op == 0x03 || op == 0x05) {
+                        if (!authenticated) {
+                            printf("Connexió recuperada! El servidor ens recordava.\n");
+                            authenticated = 1; // Tallem el bucle de REGISTER
+                        }
+                        if (op == 0x03 && eth_len > 0) { // DATA
+                            write(tap_fd, eth_frame, eth_len);
+                        }
                     }
                 }
             }
 
+            // Dades locals del TAP
             if (FD_ISSET(tap_fd, &descriptors)) {
-                int n_llegits = read(tap_fd, eth_frame, sizeof(eth_frame));
-                if (n_llegits > 0) {
-                    int total_len = encode(paquet_out, 0x03, cfg->client_id, NULL, eth_frame, n_llegits);
-                    udp_send(udp_fd, (char *)paquet_out, total_len, (struct sockaddr *)&server_addr);
+                int n = read(tap_fd, eth_frame, sizeof(eth_frame));
+                if (n > 0 && authenticated) { 
+                    int len = encode(paquet_out, 0x03, cfg->client_id, NULL, eth_frame, n);
+                    udp_send(udp_fd, (char *)paquet_out, len, (struct sockaddr *)&server_addr);
                 }
             }
         }
 
-        time_t ara = time(NULL);
-        if (ara - ultim_keepalive >= KEEPALIVE_INTERVAL_SEC) {
-            encode(paquet_out, 0x05, cfg->client_id, NULL, NULL, 0);
-            udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
-            ultim_keepalive = ara;
+        time_t ahora = time(NULL);
+        if (!authenticated) {
+            if (ahora - ultim_enviament >= 3) {
+                printf("Enviando REGISTER al servidor...\n");
+                encode(paquet_out, 0x01, cfg->client_id, NULL, NULL, 0);
+                udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+                ultim_enviament = ahora;
+            }
+        } else {
+            if (ahora - ultim_enviament >= KEEPALIVE_INTERVAL_SEC) {
+                encode(paquet_out, 0x05, cfg->client_id, NULL, NULL, 0);
+                udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+                ultim_enviament = ahora;
+            }
         }
     }
+}
+
+int main(int argc, char *argv[]) {
+    vpn_config_t cfg;
+    int res = parse_args(argc, argv, &cfg);
+    if (res == 1) { 
+        int tap_fd = tap_open(cfg.tap_if);
+        if (tap_fd < 0) {
+            perror("Error abriendo TAP");
+            return 1;
+        }
+        client_run(&cfg, tap_fd);
+        close(tap_fd);
+        return 0;
+    } 
+    return (res < 0) ? 0 : 1;
 }
