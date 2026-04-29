@@ -31,3 +31,11 @@ class Switch:
             return "FLOOD"
         else:
             return "DISCARD"
+    def eliminar_macs_client(self, cid):
+        macs_a_esborrar = []
+        for mac, client_id in self.taula_mac.items():
+            if client_id == cid:
+                macs_a_esborrar.append(mac)
+                
+        for mac in macs_a_esborrar:
+            del self.taula_mac[mac]

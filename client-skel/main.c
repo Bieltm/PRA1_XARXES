@@ -70,7 +70,6 @@ static int parse_args(int argc, char *argv[], vpn_config_t *cfg) {
     if (has_tap && has_server && has_port && has_id && has_password) return 1;
     return 0; 
 }
-
 void client_run(vpn_config_t *cfg, int tap_fd) {
     int udp_fd = udp_open();
     if (udp_fd < 0) {
@@ -88,10 +87,11 @@ void client_run(vpn_config_t *cfg, int tap_fd) {
     uint8_t eth_frame[MAX_FRAME_SIZE];
     uint8_t paquet_out[MAX_FRAME_SIZE + 20];
 
-    int authenticated = 0;
+    // estat_connexio: 0 = No registrat, 1 = Esperant validaciÃ³ contrasenya, 2 = Autenticat
+    int estat_connexio = 0; 
     time_t ultim_enviament = 0; 
 
-    printf("Cliente %d iniciado. Intentando conectar...\n", cfg->client_id);
+    printf("Client %d iniciat. Intentant conectar...\n", cfg->client_id);
 
     while (1) {
         fd_set descriptors;
@@ -104,7 +104,6 @@ void client_run(vpn_config_t *cfg, int tap_fd) {
 
         if (select(max_fd + 1, &descriptors, NULL, NULL, &tv) > 0) {
             
-            // Dades des del Servidor
             if (FD_ISSET(udp_fd, &descriptors)) {
                 struct sockaddr_in from;
                 int n = udp_recv(udp_fd, (char *)buffer_in, sizeof(buffer_in), (struct sockaddr *)&from);
@@ -113,46 +112,62 @@ void client_run(vpn_config_t *cfg, int tap_fd) {
                     uint16_t id;
                     int eth_len = descode(buffer_in, n, &op, &id, pay, eth_frame);
 
-                    if (op == 0x02) { // AUTH_REQ
-                        printf("¡Servidor responde! Enviando contraseña...\n");
-                        encode(paquet_out, 0x02, cfg->client_id, (uint8_t*)cfg->password, NULL, 0);
-                        udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
-                        authenticated = 1; 
-                    } 
-                    // NOU: Si rebem KEEPALIVE o DATA, el servidor ja ens coneix!
-                    else if (op == 0x03 || op == 0x05) {
-                        if (!authenticated) {
-                            printf("Connexió recuperada! El servidor ens recordava.\n");
-                            authenticated = 1; // Tallem el bucle de REGISTER
+                    if (op == 0x05) {
+                        if (estat_connexio == 0) {
+                            printf("El servidor accepta el REGISTER! Enviant contrasenya (AUTH)...\n");
+                            encode(paquet_out, 0x02, cfg->client_id, (uint8_t*)cfg->password, NULL, 0);
+                            udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+                            estat_connexio = 1;
+                            ultim_enviament = time(NULL);
+                        } 
+                        else if (estat_connexio == 1) {
+                            printf("AutenticaciÃ³ completada amb exit!\n");
+                            estat_connexio = 2;
                         }
-                        if (op == 0x03 && eth_len > 0) { // DATA
+                    } 
+                    else if (op == 0x06) { 
+                        printf("El servidor ha rebutjat la connexio! (Revisa credencials)\n");
+                        estat_connexio = 0;
+                    }
+                    else if (op == 0x03) {
+                        if (estat_connexio == 2 && eth_len > 0) {
                             write(tap_fd, eth_frame, eth_len);
                         }
                     }
                 }
             }
 
-            // Dades locals del TAP
             if (FD_ISSET(tap_fd, &descriptors)) {
                 int n = read(tap_fd, eth_frame, sizeof(eth_frame));
-                if (n > 0 && authenticated) { 
+                if (n > 0 && estat_connexio == 2) { 
                     int len = encode(paquet_out, 0x03, cfg->client_id, NULL, eth_frame, n);
                     udp_send(udp_fd, (char *)paquet_out, len, (struct sockaddr *)&server_addr);
+                    ultim_enviament = time(NULL);
                 }
             }
         }
 
         time_t ahora = time(NULL);
-        if (!authenticated) {
+        
+        if (estat_connexio == 0) {
             if (ahora - ultim_enviament >= 3) {
-                printf("Enviando REGISTER al servidor...\n");
+                printf("Enviant REGISTER al servidor...\n");
                 encode(paquet_out, 0x01, cfg->client_id, NULL, NULL, 0);
                 udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
                 ultim_enviament = ahora;
             }
-        } else {
+        } 
+        else if (estat_connexio == 1) {
+            if (ahora - ultim_enviament >= 3) {
+                printf("Reintentant enviar contrasenya (AUTH)...\n");
+                encode(paquet_out, 0x02, cfg->client_id, (uint8_t*)cfg->password, NULL, 0);
+                udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
+                ultim_enviament = ahora;
+            }
+        } 
+        else if (estat_connexio == 2) {
             if (ahora - ultim_enviament >= KEEPALIVE_INTERVAL_SEC) {
-                encode(paquet_out, 0x05, cfg->client_id, NULL, NULL, 0);
+                encode(paquet_out, 0x04, cfg->client_id, NULL, NULL, 0);
                 udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
                 ultim_enviament = ahora;
             }
@@ -166,7 +181,7 @@ int main(int argc, char *argv[]) {
     if (res == 1) { 
         int tap_fd = tap_open(cfg.tap_if);
         if (tap_fd < 0) {
-            perror("Error abriendo TAP");
+            perror("Error obrint el TAP");
             return 1;
         }
         client_run(&cfg, tap_fd);

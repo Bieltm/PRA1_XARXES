@@ -85,4 +85,4 @@ class Server:
             if (time.time() - session.last_seen) > temps_configurat:
                 self.delete_MAC_entrys(cid)
                 del self.session[cid]    
-
+        return False
