@@ -8,7 +8,7 @@ import stats
 import switch
 import credentials
 
-#Funcio encarregada de llençar un missatge "decorat"
+# Funció encarregada de llençar un missatge "decorat"
 def log_missatge(nivell, func_info, missatge):
     now = datetime.now()
     temps_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")[:-3]
@@ -47,16 +47,18 @@ class VpnServer:
                     if ha_expirat:
                         self.switch.eliminar_macs_client(cid)
                         del self.gestor_sessions.session[cid]
-                        
+                        log_missatge("INFO", "run:39", f"Session for client {cid} timed out after {self.config.timeout}s")
                 self.last_watchdog_time = current_time
 
-            # Mostrar Estadistiques
+            # Mostrar Estadístiques
             if current_time - self.last_stats_time >= self.config.stats_interval:
                 num_macs = len(self.switch.taula_mac)
                 self.stats.mostrar(self.gestor_sessions.session, num_macs)
                 self.last_stats_time = current_time
+                
             try:
                 dades, addr = self.sock.recvfrom(65535)
+                print(f"\n[!!!] 1. REBUT PAQUET FÍSIC DE {addr} | Longitud: {len(dades)} bytes")
             except socket.timeout:
                 continue
             except Exception as e:
@@ -67,7 +69,10 @@ class VpnServer:
 
             header = protocol.VpnHeader.unpack(dades)
             if not header:
+                print(f"[!!!] 2. ERROR: El paquet s'ha descartat perquè unpack() ha retornat None. Dades: {dades}")
                 continue  
+                
+            print(f"[!!!] 3. PAQUET DESCODIFICAT BÉ | Opcode={header.opcode.name} | CID={header.client_id} | Payload={header.payload}")
 
             opcode = header.opcode
             cid = header.client_id
@@ -76,7 +81,6 @@ class VpnServer:
             # Recuperem la sessio i sumem dades entrants
             sessio_actual = self.gestor_sessions.get_session_by_cid(cid)
             if sessio_actual:
-                self._assegurar_comptadors(sessio_actual)
                 sessio_actual.pkts_in += 1
                 sessio_actual.bytes_in += len(dades)
 
@@ -86,23 +90,31 @@ class VpnServer:
                 
                 self.gestor_sessions.on_register(cid, addr, payload)
                 log_missatge("INFO", "handle_register", f"Client {cid} registered")
-                # Comprovem la sessio un cop registrada per actualitzar estadistiques si es nova
+                
+                # Comprovem la sessio un cop registrada per actualitzar estadístiques si és nova
                 sessio_actual = self.gestor_sessions.get_session_by_cid(cid)
-                if sessio_actual:
-                    self._assegurar_comptadors(sessio_actual)
-                    if sessio_actual.pkts_in == 0:
-                        sessio_actual.pkts_in = 1
-                        sessio_actual.bytes_in = len(dades)
-
+                if sessio_actual and sessio_actual.pkts_in == 0:
+                    sessio_actual.pkts_in = 1
+                    sessio_actual.bytes_in = len(dades)
+            
             elif opcode == protocol.Opcode.AUTH:
-                if sessio_actual and sessio_actual.state == session.SessionState.REGISTERING:                    
+                if sessio_actual and sessio_actual.state == session.SessionState.REGISTERING:    
                     if credentials.validar_contrasenya(payload):
-                        sessio_actual.psswd = payload
+                        # 1. ACTUALITZEM LA CONTRASENYA A LA SESSIÓ *ABANS* DE VERIFICAR
+                        sessio_actual.psswd = payload 
+                        
+                        # 2. ARA CRIDEM LA VERIFICACIÓ
                         resultat = self.gestor_sessions.verificate(cid, payload)
+                        
+                        if resultat == 0x05:
+                            log_missatge("INFO", "handle_auth", f"Client {cid} authenticated")
+                        else:
+                            # Si verificate falla per algun motiu
+                            self.send_reject(addr, cid)
                     else:
+                        # Si la contrasenya no és vàlida
                         self.send_reject(addr, cid)
-                    log_missatge("INFO", "handle_register", f"Client {cid} authenticated")
-
+            
             elif opcode == protocol.Opcode.KEEPALIVE:
                 self.gestor_sessions.refresh_ls(dades)
 
@@ -117,7 +129,7 @@ class VpnServer:
                         # Aprenentatge MAC
                         self.switch.aprendre_mac(mac_origen, cid)
 
-                        # Decisio de reenviament
+                        # Decisió de reenviament
                         accio = self.switch.determinar_desti(mac_desti)
 
                         if accio == "BROADCAST" or accio == "FLOOD":
@@ -143,6 +155,9 @@ class VpnServer:
             if cid != excepte_cid and sessio.state == session.SessionState.AUTHENTICATED:
                 self.stats.inc_tx()
                 self.sock.sendto(dades, sessio.addr)
+                
+                sessio.pkts_out += 1
+                sessio.bytes_out += len(dades)
 
     def send_reject(self, addr, cid):
         opcode = bytes([0x06])
@@ -150,3 +165,8 @@ class VpnServer:
         payload = bytes(8)
         packet = opcode + cid_bytes + payload
         self.sock.sendto(packet, addr)
+        
+        sessio = self.gestor_sessions.get_session_by_cid(cid)
+        if sessio:
+            sessio.pkts_out += 1
+            sessio.bytes_out += len(packet)

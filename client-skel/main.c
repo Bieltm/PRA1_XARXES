@@ -117,14 +117,14 @@ void client_run(vpn_config_t *cfg, int tap_fd) {
                             printf("El servidor accepta el REGISTER! Enviant contrasenya (AUTH)...\n");
                             encode(paquet_out, 0x02, cfg->client_id, (uint8_t*)cfg->password, NULL, 0);
                             udp_send(udp_fd, (char *)paquet_out, 11, (struct sockaddr *)&server_addr);
-                            estat_connexio = 1;
-                            ultim_enviament = time(NULL);
+                            estat_connexio = 1; 
+                            
                         } 
                         else if (estat_connexio == 1) {
                             printf("Autenticació completada amb exit!\n");
                             estat_connexio = 2;
                         }
-                    } 
+                    }
                     else if (op == 0x06) { 
                         printf("El servidor ha rebutjat la connexio! (Revisa credencials)\n");
                         estat_connexio = 0;

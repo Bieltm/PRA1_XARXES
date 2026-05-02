@@ -15,7 +15,7 @@ class Switch:
         macs_a_esborrar = []
         for mac, mapped_cid in self.taula_mac.items():
             if (mapped_cid == cid):
-                macs_a_esborrar.append(map)
+                macs_a_esborrar.append(mac)
         for mac in macs_a_esborrar:
             del self.taula_mac[mac]
 
