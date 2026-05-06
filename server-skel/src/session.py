@@ -68,15 +68,9 @@ class Server:
     def verificate(self, cid_rebut, payload : bytes):
         session = self.get_session_by_cid(cid_rebut)
         # Existència: Verifica que el CID especificat tingui una sessió oberta
-        if not session:
+        if not session or session.state != SessionState.REGISTERING:
             return 0x06
-        # Estat Correcte: Comprova que la sessió estigui exactament en REGISTERING
-        if session.state != SessionState.REGISTERING:
-            return 0x06
-        # Comparació de credencials
-        psswd = session.get_psswd()
-        if (psswd != payload):
-            return 0x06
+        
         session.state = SessionState.AUTHENTICATED
         session.last_seen = time.time()
         self.send_ack(session, session.cid, self.server_socket)

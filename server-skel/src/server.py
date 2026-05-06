@@ -96,25 +96,20 @@ class VpnServer:
                 if sessio_actual and sessio_actual.pkts_in == 0:
                     sessio_actual.pkts_in = 1
                     sessio_actual.bytes_in = len(dades)
-            
             elif opcode == protocol.Opcode.AUTH:
-                if sessio_actual and sessio_actual.state == session.SessionState.REGISTERING:    
+                if sessio_actual and sessio_actual.state == session.SessionState.REGISTERING:
                     if credentials.validar_contrasenya(payload):
-                        # 1. ACTUALITZEM LA CONTRASENYA A LA SESSIÓ *ABANS* DE VERIFICAR
-                        sessio_actual.psswd = payload 
-                        
-                        # 2. ARA CRIDEM LA VERIFICACIÓ
                         resultat = self.gestor_sessions.verificate(cid, payload)
-                        
                         if resultat == 0x05:
                             log_missatge("INFO", "handle_auth", f"Client {cid} authenticated")
                         else:
-                            # Si verificate falla per algun motiu
                             self.send_reject(addr, cid)
                     else:
-                        # Si la contrasenya no és vàlida
                         self.send_reject(addr, cid)
-            
+                        
+                elif sessio_actual and sessio_actual.state == session.SessionState.AUTHENTICATED:
+                    log_missatge("INFO", "handle_auth", f"Client {cid} already authenticated. Resending ACK.")
+                    self.gestor_sessions.send_ack(sessio_actual, cid, self.sock)
             elif opcode == protocol.Opcode.KEEPALIVE:
                 self.gestor_sessions.refresh_ls(dades)
 
