@@ -69,11 +69,8 @@ class VpnServer:
 
             header = protocol.VpnHeader.unpack(dades)
             if not header:
-                print(f"[!!!] 2. ERROR: El paquet s'ha descartat perquè unpack() ha retornat None. Dades: {dades}")
                 continue  
                 
-            print(f"[!!!] 3. PAQUET DESCODIFICAT BÉ | Opcode={header.opcode.name} | CID={header.client_id} | Payload={header.payload}")
-
             opcode = header.opcode
             cid = header.client_id
             payload = header.payload
